@@ -34,7 +34,7 @@ export default async function StudentProfilePage({
         id,
         first_name,
         last_name,
-        phone,
+        phone_number,
         email,
         relationship
       )
@@ -156,7 +156,7 @@ export default async function StudentProfilePage({
             {infoSection('Pronouns', student.pronouns)}
             {infoSection('Race / Ethnicity', student.race_ethnicity)}
             {infoSection('Primary Language', student.primary_language)}
-            {infoSection('T-Shirt Size', student.t_shirt_size)}
+            {infoSection('T-Shirt Size', student.shirt_size)}
           </div>
         </div>
 
@@ -172,7 +172,7 @@ export default async function StudentProfilePage({
           </h2>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             {infoSection('Personal Email', student.personal_email)}
-            {infoSection('Phone', student.phone)}
+            {infoSection('Phone', student.phone_number)}
             {infoSection('Street Address', student.street_address)}
             {infoSection('City', student.city)}
             {infoSection('Zip Code', student.zip_code)}
@@ -192,8 +192,8 @@ export default async function StudentProfilePage({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             {infoSection('School', student.school)}
             {infoSection('Grade Level', student.grade_level)}
-            {infoSection('Graduation Year', student.graduation_year?.toString())}
-            {infoSection('IEP / 504', student.iep_or_504 ? 'Yes' : 'No')}
+            {infoSection('Graduation Year', student.grad_year?.toString())}
+            {infoSection('IEP / 504', student.IEP_504)}
           </div>
         </div>
 
@@ -210,6 +210,7 @@ export default async function StudentProfilePage({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             {infoSection('Free / Reduced Lunch', student.free_reduced_lunch ? 'Yes' : 'No')}
             {infoSection('Dietary Restrictions', student.dietary_restrictions)}
+            {infoSection('IEP / 504 Details', student.iep_504_details)}
             {infoSection('Emergency Contact', student.emergency_contact_name)}
             {infoSection('Emergency Phone', student.emergency_contact_phone)}
           </div>
@@ -234,7 +235,7 @@ export default async function StudentProfilePage({
             {guardians.map((g, i) => {
               const guardian = g.guardians as unknown as {
                 id: string, first_name: string, last_name: string,
-                phone: string, email: string, relationship: string
+                phone_number: string, email: string, relationship: string
               }
               return (
                 <div key={i} style={{
@@ -250,7 +251,7 @@ export default async function StudentProfilePage({
                     {guardian.relationship ?? 'Guardian'}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '4px' }}>
-                    {infoSection('Phone', guardian.phone)}
+                    {infoSection('Phone', guardian.phone_number)}
                     {infoSection('Email', guardian.email)}
                   </div>
                 </div>
@@ -306,8 +307,8 @@ export default async function StudentProfilePage({
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{ fontSize: '12px', color: '#9ca3af' }}>
-                      {enrollment.enrollment_date && new Date(enrollment.enrollment_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                      {enrollment.exit_date && ` — ${new Date(enrollment.exit_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
+                      {enrollment.enrollment_date && new Date(enrollment.enrollment_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                      {enrollment.exit_date && ` — ${new Date(enrollment.exit_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
                       {!enrollment.exit_date && ' — Present'}
                     </div>
                     <span style={{
