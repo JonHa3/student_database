@@ -29,7 +29,6 @@ export default async function Home() {
 
   return (
     <div>
-      {/* Page header */}
       <div style={{ marginBottom: '32px' }}>
         <h1 style={{
           fontSize: '24px',
@@ -44,7 +43,6 @@ export default async function Home() {
         </p>
       </div>
 
-      {/* Stats row */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(3, 1fr)',
@@ -83,7 +81,6 @@ export default async function Home() {
         ))}
       </div>
 
-      {/* Programs section */}
       <div style={{ marginBottom: '24px' }}>
         <h2 style={{
           fontSize: '16px',
@@ -142,12 +139,9 @@ export default async function Home() {
                   justifyContent: 'space-between',
                   alignItems: 'center',
                 }}>
-                  <div style={{
-                    fontSize: '13px',
-                    color: '#6b7280',
-                  }}>
-                    {program.start_date && new Date(program.start_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                    {program.end_date && ` — ${new Date(program.end_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
+                  <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                    {program.start_date && new Date(program.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                    {program.end_date && ` — ${new Date(program.end_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
                     {!program.end_date && program.start_date && ' — Ongoing'}
                   </div>
                   <div style={{
