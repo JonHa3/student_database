@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import Papa from 'papaparse'
+import Link from 'next/link'
 
 type RawRow = Record<string, string>
 
@@ -397,7 +398,7 @@ export default function ImportPage() {
             {result.message}
           </div>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-            <a href="/students" style={{
+            <link href="/students" style={{
               backgroundColor: '#ff5120', color: '#ffffff', padding: '10px 24px',
               borderRadius: '8px', textDecoration: 'none', fontSize: '14px', fontWeight: '600',
             }}>
