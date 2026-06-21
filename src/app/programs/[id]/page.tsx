@@ -75,19 +75,10 @@ export default async function ProgramDetailPage({
         borderLeft: '4px solid #ff5120',
         marginBottom: '24px',
       }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-              <h1 style={{
-                fontSize: '24px',
-                fontWeight: '700',
-                color: '#0a2240',
-                margin: 0,
-              }}>
+              <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#0a2240', margin: 0 }}>
                 {program.name}
               </h1>
               <span style={{
@@ -103,35 +94,50 @@ export default async function ProgramDetailPage({
                 {isActive ? 'Active' : 'Ended'}
               </span>
             </div>
-
             {program.description && (
               <p style={{ color: '#6b7280', fontSize: '14px', margin: '0 0 16px 0', lineHeight: 1.6 }}>
                 {program.description}
               </p>
             )}
-
             <div style={{ fontSize: '13px', color: '#9ca3af' }}>
-              {program.start_date && new Date(program.start_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-              {program.end_date && ` — ${new Date(program.end_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`}
+              {program.start_date && new Date(program.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+              {program.end_date && ` — ${new Date(program.end_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`}
               {!program.end_date && ' — Ongoing'}
             </div>
           </div>
 
-          {/* Stats */}
-          <div style={{ display: 'flex', gap: '24px', marginLeft: '32px' }}>
-            {[
-              { label: 'Active', value: activeEnrollments.length, color: '#ff5120' },
-              { label: 'Total', value: enrollments?.length ?? 0, color: '#5eb3e4' },
-            ].map((stat) => (
-              <div key={stat.label} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '32px', fontWeight: '800', color: stat.color, lineHeight: 1 }}>
-                  {stat.value}
+          {/* Stats + Edit button */}
+          <div style={{ display: 'flex', flexDirection: 'column' as const, alignItems: 'flex-end', gap: '16px', marginLeft: '32px' }}>
+            <div style={{ display: 'flex', gap: '24px' }}>
+              {[
+                { label: 'Active', value: activeEnrollments.length, color: '#ff5120' },
+                { label: 'Total', value: enrollments?.length ?? 0, color: '#5eb3e4' },
+              ].map((stat) => (
+                <div key={stat.label} style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '32px', fontWeight: '800', color: stat.color, lineHeight: 1 }}>
+                    {stat.value}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                    {stat.label}
+                  </div>
                 </div>
-                <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
-                  {stat.label}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+            {isAdmin && (
+              <Link href={`/programs/${id}/edit`} style={{
+                backgroundColor: '#f9fafb',
+                color: '#0a2240',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                textDecoration: 'none',
+                fontSize: '13px',
+                fontWeight: '600',
+                border: '1px solid #e5e7eb',
+                whiteSpace: 'nowrap' as const,
+              }}>
+                Edit Program
+              </Link>
+            )}
           </div>
         </div>
       </div>
@@ -230,7 +236,7 @@ export default async function ProgramDetailPage({
                       </td>
                       <td style={{ padding: '14px 16px', fontSize: '13px', color: '#6b7280' }}>
                         {enrollment.enrollment_date
-                          ? new Date(enrollment.enrollment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                          ? new Date(enrollment.enrollment_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                           : '—'}
                       </td>
                       <td style={{ padding: '14px 16px', fontSize: '13px', color: '#6b7280' }}>
@@ -300,12 +306,12 @@ export default async function ProgramDetailPage({
                       </td>
                       <td style={{ padding: '14px 16px', fontSize: '13px', color: '#6b7280' }}>
                         {enrollment.enrollment_date
-                          ? new Date(enrollment.enrollment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                          ? new Date(enrollment.enrollment_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                           : '—'}
                       </td>
                       <td style={{ padding: '14px 16px', fontSize: '13px', color: '#6b7280' }}>
                         {enrollment.exit_date
-                          ? new Date(enrollment.exit_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                          ? new Date(enrollment.exit_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                           : '—'}
                       </td>
                       <td style={{ padding: '14px 16px', fontSize: '13px', color: '#6b7280' }}>
