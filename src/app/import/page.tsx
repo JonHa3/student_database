@@ -403,7 +403,7 @@ export default function ImportPage() {
               borderRadius: '8px', textDecoration: 'none', fontSize: '14px', fontWeight: '600',
             }}>
               View Students
-            </a>
+            </link>
             <button
               onClick={() => { setStep('upload'); setParsed(null) }}
               style={{
