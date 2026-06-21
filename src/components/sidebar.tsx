@@ -7,7 +7,8 @@ const navItems = [
   { label: 'Dashboard', href: '/' },
   { label: 'Programs', href: '/programs' },
   { label: 'Students', href: '/students' },
-  { label: 'Import', href: '/import' }
+  { label: 'Import', href: '/import' },
+  { label: 'Team' , href: '/team' }
 ]
 
 export default function Sidebar() {
