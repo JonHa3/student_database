@@ -398,12 +398,12 @@ export default function ImportPage() {
             {result.message}
           </div>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-            <link href="/students" style={{
+            <Link href="/students" style={{
               backgroundColor: '#ff5120', color: '#ffffff', padding: '10px 24px',
               borderRadius: '8px', textDecoration: 'none', fontSize: '14px', fontWeight: '600',
             }}>
               View Students
-            </link>
+            </Link>
             <button
               onClick={() => { setStep('upload'); setParsed(null) }}
               style={{
