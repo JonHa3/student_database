@@ -6,23 +6,39 @@
  * Turns a Google Forms CSV export into rows in `students` / `guardians`, and
  * links guardians to the student(s) they belong to.
  *
- * The flow is three steps: Upload -> Preview -> Done.
+ * The flow is four steps: Upload -> Map Columns -> Preview -> Done.
  *
- *  1. Upload   - the staff member picks a CSV (PapaParse turns it into rows
- *                of plain strings, keyed by column header).
- *  2. Preview  - we parse + validate every row client-side and classify each
- *                one as "new" (will be imported), "duplicate" (student
- *                already exists in the database and will be skipped so we
- *                never create doubles when the same form export is
- *                re-uploaded), or "invalid" (missing/unreadable required
- *                data, also skipped). Nothing is written to the database
- *                yet, so staff can catch problems before anything happens.
- *  3. Done     - only the "new" rows are inserted. We report exactly what
- *                happened (counts + reasons for anything skipped) and let
- *                staff download a CSV of the skipped rows so nothing is
- *                silently lost.
+ *  1. Upload      - the staff member picks a CSV (PapaParse turns it into
+ *                   rows of plain strings, keyed by the file's own column
+ *                   headers — whatever Google Forms happened to export).
+ *  2. Map Columns - every CSV column is matched against our known fields
+ *                   using fuzzy text matching (see "Column matching" below),
+ *                   pre-filling a best guess for each one. Staff review and
+ *                   fix the mapping before anything is parsed, which is what
+ *                   removes the old requirement to hand-rename headers to an
+ *                   exact match before every import.
+ *  3. Preview     - using the confirmed mapping, we parse + validate every
+ *                   row and classify each one as "new" (will be imported),
+ *                   "duplicate" (student already exists in the database and
+ *                   will be skipped so we never create doubles when the same
+ *                   form export is re-uploaded), or "invalid" (missing/
+ *                   unreadable required data, also skipped). Nothing is
+ *                   written to the database yet.
+ *  4. Done        - only the "new" rows are inserted. We report exactly what
+ *                   happened and let staff download a CSV of anything
+ *                   skipped, so nothing is silently lost.
  *
- * Guardian linking: the CSV's timestamp column (renamed to `created_at`) is
+ * Column matching: rather than a machine-learning model (overkill for a
+ * small, fixed vocabulary, and would mean standing up a separate Python
+ * service just for this), each target field lists a handful of known
+ * phrasings ("aliases"). An incoming CSV header is scored against every
+ * field's label + aliases using simple token overlap (think: an F1 score
+ * over shared words), with an edit-distance fallback for single-word typos.
+ * The highest-scoring, non-conflicting pairs become the suggested mapping —
+ * see `suggestMapping` below. If your form's wording isn't matching well,
+ * add more phrasings to `MAPPABLE_FIELDS`; no retraining required.
+ *
+ * Guardian linking: the CSV's timestamp column (mapped to `created_at`) is
  * shared by a student and their guardian(s) because they come from the same
  * form submission. After inserting, we call the `link_guardians_to_students`
  * Postgres function, which matches rows on that shared timestamp. We then
@@ -30,7 +46,7 @@
  * didn't (e.g. a row with a missing timestamp) instead of failing silently.
  */
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import Papa from 'papaparse'
 import Link from 'next/link'
@@ -90,30 +106,160 @@ type ExistingStudent = {
 }
 
 // ---------------------------------------------------------------------------
-// Header + value parsing helpers
+// Target fields + fuzzy column matching
 // ---------------------------------------------------------------------------
 
+type FieldDef = { key: string; label: string; required?: boolean; aliases: string[] }
+
 /**
- * Normalizes a CSV column header so minor formatting differences ("First
- * Name", "first-name", "  first_name ") all resolve to the same key
- * ("first_name"). This means staff don't have to hand-rename headers to an
- * exact match every time they export from Google Forms.
+ * Every field the import understands, with a few known phrasings each.
+ * `suggestMapping` scores incoming CSV headers against these — extend the
+ * alias lists here if a form's wording keeps needing manual correction.
  */
-function normalizeHeader(key: string): string {
-  return key
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-    .replace(/[^a-z0-9_]/g, '')
+const MAPPABLE_FIELDS: FieldDef[] = [
+  { key: 'first_name', label: 'Student First Name', required: true, aliases: ['first name', 'student first name', 'child first name', 'legal first name'] },
+  { key: 'last_name', label: 'Student Last Name', required: true, aliases: ['last name', 'student last name', 'child last name', 'legal last name', 'surname'] },
+  { key: 'birthday', label: 'Birthday', aliases: ['birthday', 'date of birth', 'dob', 'birth date'] },
+  { key: 'gender', label: 'Gender', aliases: ['gender', 'sex'] },
+  { key: 'pronouns', label: 'Pronouns', aliases: ['pronouns'] },
+  { key: 'race_ethnicity', label: 'Race / Ethnicity', aliases: ['race ethnicity', 'race', 'ethnicity'] },
+  { key: 'primary_language', label: 'Primary Language', aliases: ['primary language', 'home language', 'language spoken at home'] },
+  { key: 'school', label: 'School', aliases: ['school', 'school name', 'current school'] },
+  { key: 'grade_level', label: 'Grade Level', aliases: ['grade level', 'grade', 'current grade'] },
+  { key: 'grad_year', label: 'Graduation Year', aliases: ['grad year', 'graduation year', 'expected graduation year'] },
+  { key: 'personal_email', label: 'Student Email', aliases: ['personal email', 'student email', 'email address', 'email'] },
+  { key: 'phone_number', label: 'Student Phone', aliases: ['phone number', 'student phone', 'cell phone', 'mobile number'] },
+  { key: 'street_address', label: 'Street Address', aliases: ['street address', 'address', 'home address', 'mailing address'] },
+  { key: 'city', label: 'City', aliases: ['city'] },
+  { key: 'zip_code', label: 'Zip Code', aliases: ['zip code', 'zip', 'postal code'] },
+  { key: 'free_reduced_lunch', label: 'Free / Reduced Lunch', aliases: ['free reduced lunch', 'free or reduced lunch', 'lunch program', 'frl'] },
+  { key: 'dietary_restrictions', label: 'Dietary Restrictions', aliases: ['dietary restrictions', 'allergies', 'food allergies', 'dietary needs'] },
+  { key: 'shirt_size', label: 'T-Shirt Size', aliases: ['shirt size', 't shirt size', 'tshirt size'] },
+  { key: 'iep_or_504', label: 'IEP / 504', aliases: ['iep or 504', 'iep 504', '504 plan', 'has an iep or 504 plan'] },
+  { key: 'iep_504_details', label: 'IEP / 504 Details', aliases: ['iep 504 details', 'iep details', 'accommodation details'] },
+  { key: 'created_at', label: 'Submission Timestamp', aliases: ['created at', 'timestamp', 'submitted at', 'submission time', 'time stamp'] },
+  { key: 'guardian_first_name', label: 'Guardian First Name', aliases: ['guardian first name', 'parent first name', 'primary guardian first name'] },
+  { key: 'guardian_last_name', label: 'Guardian Last Name', aliases: ['guardian last name', 'parent last name', 'primary guardian last name'] },
+  { key: 'guardian_phone_number', label: 'Guardian Phone', aliases: ['guardian phone number', 'parent phone number', 'guardian phone'] },
+  { key: 'guardian_email', label: 'Guardian Email', aliases: ['guardian email', 'parent email'] },
+  { key: 'guardian_relationship', label: 'Guardian Relationship', aliases: ['guardian relationship', 'relationship to student', 'relationship'] },
+  { key: 'secondary_first_name', label: 'Secondary Contact First Name', aliases: ['secondary first name', 'secondary contact first name', 'emergency contact first name'] },
+  { key: 'secondary_last_name', label: 'Secondary Contact Last Name', aliases: ['secondary last name', 'secondary contact last name', 'emergency contact last name'] },
+  { key: 'secondary_phone_number', label: 'Secondary Contact Phone', aliases: ['secondary phone number', 'secondary contact phone', 'emergency contact phone'] },
+  { key: 'secondary_email', label: 'Secondary Contact Email', aliases: ['secondary email', 'secondary contact email', 'emergency contact email'] },
+  { key: 'secondary_relationship', label: 'Secondary Contact Relationship', aliases: ['secondary relationship', 'secondary contact relationship'] },
+]
+
+function normalizeForMatch(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-function normalizeRow(row: RawRow): RawRow {
-  const out: RawRow = {}
-  for (const [key, value] of Object.entries(row)) {
-    out[normalizeHeader(key)] = value
+function tokenize(s: string): string[] {
+  return normalizeForMatch(s).split(' ').filter(Boolean)
+}
+
+function levenshtein(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0))
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+    }
+  }
+  return dp[a.length][b.length]
+}
+
+/**
+ * Scores how likely `sourceHeader` (a raw CSV column name) refers to the
+ * same concept as `alias` (one known phrasing of a target field), from 0
+ * (unrelated) to 1 (same). Token-overlap based — like an F1 score over
+ * shared words — so word order and filler words ("What is the student's
+ * ...?") don't throw it off, with a Levenshtein fallback so a single-word
+ * typo ("adress") still matches.
+ */
+function similarity(sourceHeader: string, alias: string): number {
+  const sTokens = tokenize(sourceHeader)
+  const aTokens = tokenize(alias)
+  if (sTokens.length === 0 || aTokens.length === 0) return 0
+
+  const overlap = sTokens.filter(t => aTokens.includes(t)).length
+  if (overlap > 0) {
+    const coverage = overlap / aTokens.length   // how much of the target concept is present
+    const precision = overlap / sTokens.length  // how much of the source header is explained by it
+    return (coverage + precision) / 2
+  }
+
+  if (sTokens.length === 1 && aTokens.length === 1) {
+    const dist = levenshtein(sTokens[0], aTokens[0])
+    const maxLen = Math.max(sTokens[0].length, aTokens[0].length)
+    return Math.max(0, 1 - dist / maxLen)
+  }
+
+  return 0
+}
+
+const MATCH_CONFIDENCE_THRESHOLD = 0.5
+
+type SuggestedMatch = { field: string; score: number } | null
+
+/**
+ * Suggests a target field for every raw CSV header. Scores every
+ * (header, field) pair, then greedily assigns the best-scoring pairs first
+ * so no header or field is claimed twice — e.g. if two columns both look
+ * like "first_name", only the closer match gets it and the other is left
+ * for the person reviewing the mapping to resolve.
+ */
+function suggestMapping(rawHeaders: string[]): { columnMapping: Record<string, string>; scores: Record<string, SuggestedMatch> } {
+  const candidates: { header: string; field: string; score: number }[] = []
+  for (const header of rawHeaders) {
+    for (const field of MAPPABLE_FIELDS) {
+      let best = 0
+      for (const alias of [field.label, ...field.aliases]) {
+        best = Math.max(best, similarity(header, alias))
+      }
+      if (best >= MATCH_CONFIDENCE_THRESHOLD) candidates.push({ header, field: field.key, score: best })
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score)
+
+  const columnMapping: Record<string, string> = Object.fromEntries(rawHeaders.map(h => [h, '']))
+  const scores: Record<string, SuggestedMatch> = Object.fromEntries(rawHeaders.map(h => [h, null]))
+  const claimedFields = new Set<string>()
+
+  for (const { header, field, score } of candidates) {
+    if (columnMapping[header]) continue // header already claimed by a better match
+    if (claimedFields.has(field)) continue // field already claimed by a better match
+    columnMapping[header] = field
+    scores[header] = { field, score }
+    claimedFields.add(field)
+  }
+
+  return { columnMapping, scores }
+}
+
+/** Builds a field-key -> raw-header lookup from the (header -> field) mapping the user confirmed. */
+function invertMapping(columnMapping: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [header, field] of Object.entries(columnMapping)) {
+    if (field) out[field] = header
   }
   return out
 }
+
+function resolveRow(rawRow: RawRow, fieldToHeader: Record<string, string>): RawRow {
+  const out: RawRow = {}
+  for (const [field, header] of Object.entries(fieldToHeader)) {
+    out[field] = rawRow[header]
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// Value parsing helpers
+// ---------------------------------------------------------------------------
 
 function cleanString(val: string | undefined): string | null {
   const v = val?.trim()
@@ -176,9 +322,10 @@ function normalizeNameKey(first: string, last: string, birthday: string | null):
 // Row parsing + classification
 // ---------------------------------------------------------------------------
 
-function parseRows(rows: RawRow[]): ParsedRow[] {
-  return rows.map((rawRow, i) => {
-    const row = normalizeRow(rawRow)
+/** Parses raw CSV rows into student/guardian records using the confirmed column mapping. */
+function parseRows(rawRows: RawRow[], fieldToHeader: Record<string, string>): ParsedRow[] {
+  return rawRows.map((rawRow, i) => {
+    const row = resolveRow(rawRow, fieldToHeader)
     const reasons: string[] = []
 
     const first_name = cleanString(row['first_name']) ?? ''
@@ -307,10 +454,10 @@ type FieldCompleteness = { label: string; filled: number; total: number; pct: nu
 
 /**
  * For every field we expect from the CSV, counts how many parsed rows
- * actually have a value. A field sitting at (or near) 0% across every row
- * almost always means the CSV's column header didn't match what we expect
- * — not that the data is genuinely blank — so staff can catch a mapping
- * problem in one upload instead of importing, noticing, and re-importing.
+ * actually have a value. Now that column mapping is explicit and confirmed
+ * up front, a field stuck at 0% here usually means the source data itself
+ * is empty rather than a header-mapping mistake — but it's kept as a
+ * second line of defense either way.
  */
 function computeFieldCompleteness(rows: ParsedRow[]): FieldCompleteness[] {
   const total = rows.length
@@ -348,38 +495,94 @@ type ImportResult = {
 
 export default function ImportPage() {
   const supabase = createClient()
+  const [step, setStep] = useState<'upload' | 'map' | 'preview' | 'done'>('upload')
+  const [parsing, setParsing] = useState(false)
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false)
+
+  // Upload + Map Columns state
+  const [rawRows, setRawRows] = useState<RawRow[]>([])
+  const [rawHeaders, setRawHeaders] = useState<string[]>([])
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({})
+  const [suggestedScores, setSuggestedScores] = useState<Record<string, SuggestedMatch>>({})
+
+  // Preview + Done state
   const [rows, setRows] = useState<ParsedRow[] | null>(null)
   const [loading, setLoading] = useState(false)
-  const [checkingDuplicates, setCheckingDuplicates] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
-  const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload')
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
 
-    setCheckingDuplicates(true)
+    setParsing(true)
 
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: async (results) => {
-        const rawRows = results.data as RawRow[]
-        const parsedRows = parseRows(rawRows)
+      complete: (results) => {
+        const parsedRawRows = results.data as RawRow[]
+        const headers = results.meta.fields ?? []
+        const { columnMapping: suggested, scores } = suggestMapping(headers)
 
-        // Check parsed rows against students already in the database so
-        // we can flag duplicates before anything is imported.
-        const { data: existing, error: fetchError } = await supabase
-          .from('students')
-          .select('personal_email, first_name, last_name, birthday')
-
-        const withDuplicates = fetchError ? parsedRows : markDuplicates(parsedRows, existing ?? [])
-
-        setRows(withDuplicates)
-        setStep('preview')
-        setCheckingDuplicates(false)
+        setRawRows(parsedRawRows)
+        setRawHeaders(headers)
+        setColumnMapping(suggested)
+        setSuggestedScores(scores)
+        setStep('map')
+        setParsing(false)
       }
     })
+  }
+
+  // Sample value shown next to each column in the mapping table, to help
+  // whoever's reviewing it recognize what the column actually contains.
+  const sampleValues = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const header of rawHeaders) {
+      const withValue = rawRows.find(r => cleanString(r[header]))
+      out[header] = withValue ? withValue[header] : ''
+    }
+    return out
+  }, [rawHeaders, rawRows])
+
+  const mappingIssues = useMemo(() => {
+    const issues: string[] = []
+    const fieldCounts: Record<string, number> = {}
+    for (const field of Object.values(columnMapping)) {
+      if (field) fieldCounts[field] = (fieldCounts[field] ?? 0) + 1
+    }
+    for (const [field, count] of Object.entries(fieldCounts)) {
+      if (count > 1) {
+        const label = MAPPABLE_FIELDS.find(f => f.key === field)?.label ?? field
+        issues.push(`"${label}" is mapped from more than one column — set the extra one(s) to "Don't import".`)
+      }
+    }
+    for (const field of MAPPABLE_FIELDS.filter(f => f.required)) {
+      if (!Object.values(columnMapping).includes(field.key)) {
+        issues.push(`"${field.label}" must be mapped to a column before continuing.`)
+      }
+    }
+    return issues
+  }, [columnMapping])
+
+  async function handleConfirmMapping() {
+    if (mappingIssues.length > 0) return
+    setCheckingDuplicates(true)
+
+    const fieldToHeader = invertMapping(columnMapping)
+    const parsedRows = parseRows(rawRows, fieldToHeader)
+
+    // Check parsed rows against students already in the database so we can
+    // flag duplicates before anything is imported.
+    const { data: existing, error: fetchError } = await supabase
+      .from('students')
+      .select('personal_email, first_name, last_name, birthday')
+
+    const withDuplicates = fetchError ? parsedRows : markDuplicates(parsedRows, existing ?? [])
+
+    setRows(withDuplicates)
+    setStep('preview')
+    setCheckingDuplicates(false)
   }
 
   async function handleImport() {
@@ -479,6 +682,10 @@ export default function ImportPage() {
 
   function reset() {
     setStep('upload')
+    setRawRows([])
+    setRawHeaders([])
+    setColumnMapping({})
+    setSuggestedScores({})
     setRows(null)
     setResult(null)
   }
@@ -495,6 +702,20 @@ export default function ImportPage() {
     invalid: { bg: '#fef2f2', text: '#dc2626', label: 'Invalid' },
   }
 
+  const selectStyle = {
+    padding: '8px 10px',
+    borderRadius: '6px',
+    border: '1px solid #e5e7eb',
+    fontSize: '13px',
+    color: '#0a2240',
+    backgroundColor: '#ffffff',
+    outline: 'none',
+    minWidth: '220px',
+  }
+
+  const steps = ['Upload', 'Map Columns', 'Preview', 'Done']
+  const stepIndex = ['upload', 'map', 'preview', 'done'].indexOf(step)
+
   return (
     <div>
       <div style={{ marginBottom: '32px' }}>
@@ -502,14 +723,13 @@ export default function ImportPage() {
           Import Students
         </h1>
         <p style={{ color: '#6b7280', marginTop: '4px', fontSize: '14px' }}>
-          Upload your renamed CSV export to import students and guardians.
+          Upload your Google Forms CSV export to import students and guardians.
         </p>
       </div>
 
       {/* Steps indicator */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '32px', alignItems: 'center' }}>
-        {['Upload', 'Preview', 'Done'].map((s, i) => {
-          const stepIndex = ['upload', 'preview', 'done'].indexOf(step)
+        {steps.map((s, i) => {
           const isActive = i === stepIndex
           const isComplete = i < stepIndex
           return (
@@ -530,7 +750,7 @@ export default function ImportPage() {
               }}>
                 {s}
               </span>
-              {i < 2 && <div style={{ width: '32px', height: '1px', backgroundColor: '#e5e7eb' }} />}
+              {i < steps.length - 1 && <div style={{ width: '32px', height: '1px', backgroundColor: '#e5e7eb' }} />}
             </div>
           )
         })}
@@ -544,22 +764,133 @@ export default function ImportPage() {
         }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>📂</div>
           <div style={{ fontWeight: '700', color: '#0a2240', fontSize: '18px', marginBottom: '8px' }}>
-            {checkingDuplicates ? 'Checking for duplicates…' : 'Upload your CSV file'}
+            {parsing ? 'Reading file…' : 'Upload your CSV file'}
           </div>
-          <div style={{ color: '#6b7280', fontSize: '14px', marginBottom: '8px' }}>
-            Column headers are matched case- and spacing-insensitively, so exact renaming isn&apos;t required.
-          </div>
-          <div style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '32px' }}>
-            Refer to the Import Guide for the full list of expected column names.
+          <div style={{ color: '#6b7280', fontSize: '14px', marginBottom: '32px' }}>
+            The next step will suggest how each column maps to a student field — no need to rename headers first.
           </div>
           <label style={{
-            backgroundColor: checkingDuplicates ? '#9ca3af' : '#ff5120', color: '#ffffff', padding: '12px 32px',
+            backgroundColor: parsing ? '#9ca3af' : '#ff5120', color: '#ffffff', padding: '12px 32px',
             borderRadius: '8px', fontSize: '14px', fontWeight: '600',
-            cursor: checkingDuplicates ? 'not-allowed' : 'pointer', display: 'inline-block',
+            cursor: parsing ? 'not-allowed' : 'pointer', display: 'inline-block',
           }}>
             Choose CSV File
-            <input type="file" accept=".csv" onChange={handleFile} disabled={checkingDuplicates} style={{ display: 'none' }} />
+            <input type="file" accept=".csv" onChange={handleFile} disabled={parsing} style={{ display: 'none' }} />
           </label>
+        </div>
+      )}
+
+      {/* Map Columns step */}
+      {step === 'map' && (
+        <div>
+          <div style={{
+            backgroundColor: '#ffffff', borderRadius: '12px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.06)', overflow: 'hidden', marginBottom: '24px',
+          }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb' }}>
+              <h2 style={{ fontSize: '14px', fontWeight: '700', color: '#0a2240', margin: '0 0 4px 0' }}>
+                Confirm Column Mapping
+              </h2>
+              <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
+                Each column has been matched to a field automatically — check the guesses and adjust anything that looks wrong.
+              </p>
+            </div>
+            <div style={{ overflowX: 'auto', maxHeight: '520px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                    {['CSV Column', 'Sample Value', 'Maps To', 'Match'].map(h => (
+                      <th key={h} style={{
+                        padding: '10px 16px', textAlign: 'left', fontSize: '11px',
+                        fontWeight: '600', color: '#6b7280', textTransform: 'uppercase',
+                        letterSpacing: '0.5px', whiteSpace: 'nowrap', position: 'sticky', top: 0, backgroundColor: '#f9fafb',
+                      }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rawHeaders.map((header, i) => {
+                    const match = suggestedScores[header]
+                    const currentField = columnMapping[header] ?? ''
+                    const isSuggested = !!match && currentField === match.field
+                    const badge = !currentField
+                      ? { bg: '#f3f4f6', text: '#9ca3af', label: 'Not imported' }
+                      : isSuggested && match!.score >= 0.85
+                      ? { bg: '#f0fdf4', text: '#16a34a', label: 'Auto-matched' }
+                      : isSuggested
+                      ? { bg: '#fffbeb', text: '#b45309', label: 'Best guess — check' }
+                      : { bg: '#eff6ff', text: '#5eb3e4', label: 'Manually set' }
+                    return (
+                      <tr key={header} style={{ borderBottom: i < rawHeaders.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0a2240' }}>
+                          {header}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {sampleValues[header] || '—'}
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <select
+                            value={currentField}
+                            onChange={e => setColumnMapping(prev => ({ ...prev, [header]: e.target.value }))}
+                            style={selectStyle}
+                          >
+                            <option value="">— Don&apos;t import —</option>
+                            {MAPPABLE_FIELDS.map(f => (
+                              <option key={f.key} value={f.key}>{f.label}{f.required ? ' *' : ''}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <span style={{
+                            backgroundColor: badge.bg, color: badge.text, fontSize: '11px', fontWeight: '600',
+                            padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap',
+                          }}>
+                            {badge.label}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {mappingIssues.length > 0 && (
+            <div style={{
+              backgroundColor: '#fef2f2', color: '#dc2626', padding: '12px 16px',
+              borderRadius: '8px', fontSize: '13px', marginBottom: '24px',
+            }}>
+              {mappingIssues.map(issue => <div key={issue}>{issue}</div>)}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button
+              onClick={handleConfirmMapping}
+              disabled={mappingIssues.length > 0 || checkingDuplicates}
+              style={{
+                backgroundColor: (mappingIssues.length > 0 || checkingDuplicates) ? '#9ca3af' : '#ff5120',
+                color: '#ffffff', padding: '12px 32px', borderRadius: '8px',
+                border: 'none', fontSize: '14px', fontWeight: '600',
+                cursor: (mappingIssues.length > 0 || checkingDuplicates) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {checkingDuplicates ? 'Checking for duplicates…' : 'Continue to Preview'}
+            </button>
+            <button
+              onClick={reset}
+              style={{
+                backgroundColor: '#f9fafb', color: '#6b7280', padding: '12px 24px',
+                borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px',
+                fontWeight: '600', cursor: 'pointer',
+              }}
+            >
+              Start Over
+            </button>
+          </div>
         </div>
       )}
 
@@ -583,7 +914,7 @@ export default function ImportPage() {
             ))}
           </div>
 
-          {/* Field completeness — catches header-mapping mistakes before import */}
+          {/* Field completeness — second line of defense after column mapping */}
           <div style={{
             backgroundColor: '#ffffff', borderRadius: '12px', padding: '20px 24px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: '24px',
@@ -592,7 +923,7 @@ export default function ImportPage() {
               Field Completeness
             </h2>
             <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 16px 0' }}>
-              A field stuck at 0% almost always means its column header didn&apos;t match — not that every row is genuinely blank.
+              A field stuck at 0% is worth a second look — either the source data is genuinely blank, or the wrong column got mapped to it.
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px 24px' }}>
               {completeness.map(f => (
@@ -692,6 +1023,16 @@ export default function ImportPage() {
               }}
             >
               {loading ? 'Importing...' : `Import ${newCount} Student${newCount === 1 ? '' : 's'}`}
+            </button>
+            <button
+              onClick={() => setStep('map')}
+              style={{
+                backgroundColor: '#f9fafb', color: '#6b7280', padding: '12px 24px',
+                borderRadius: '8px', border: '1px solid #e5e7eb', fontSize: '14px',
+                fontWeight: '600', cursor: 'pointer',
+              }}
+            >
+              Back to Mapping
             </button>
             <button
               onClick={reset}

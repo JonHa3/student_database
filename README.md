@@ -1,17 +1,41 @@
 # Do Greater Student Database
 
-A full-stack student database management system built for **Do Greater Charlotte**, a Charlotte-based youth non-profit. It replaced manual spreadsheet tracking with a secure, role-based web app for managing student records, guardian relationships, program participation, and bulk data import from the organization's Google Forms intake process.
+An internal, team-only student database management system built for **Do Greater Charlotte**, a Charlotte-based youth non-profit. It replaced manual spreadsheet tracking with a secure, role-based web app for managing student records, guardian relationships, program participation, and bulk data import from the organization's Google Forms intake process.
 
-**Live app:** https://student-database-xi.vercel.app
+This repo and the screenshots below are shared publicly (e.g. with recruiters) to show the engineering work. **The live app itself is private** — it holds real student data, sign-in is restricted to Do Greater Charlotte's team via Google OAuth, and it isn't meant to be browsed by anyone outside the organization.
+
+**Live app:** https://student-database-xi.vercel.app *(staff-only — Google sign-in required)*
 **Built by:** Jonathan Hardeman — Software Engineering Intern, Summer 2026 (solo full-stack engineer)
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) Dashboard | ![Programs](docs/screenshots/programs.png) Programs |
+| ![Students list](docs/screenshots/students.png) Students list | ![Import](docs/screenshots/import.png) CSV import |
+
 <!--
-  SCREENSHOTS
-  ------------
-  Add screenshots to docs/screenshots/ and reference them below, e.g.:
-  ![Dashboard](docs/screenshots/dashboard.png)
-  Suggested shots: login, dashboard, students list (with filters), a student
-  profile (with attachments), the import preview, and programs.
+  Screenshot notes:
+  - Dashboard/Programs show only aggregate counts and program info, no
+    individual student data, so no redaction needed. Students/Import use
+    placeholder/test data.
+  - A real screenshot of program-detail.png (a program's enrolled-students
+    table) was redacted (student name column blacked out) in an earlier
+    pass but is left out of the README for now — add it back once there's
+    a version with placeholder/demo data instead.
+  - These are from before the filters/bulk-actions/CSV-export/import-preview
+    work in this pass shipped to production. Once deployed, retake
+    students.png (to show the filter row + bulk action bar) and import.png
+    (to show the Map Columns step and the new/duplicate/invalid preview +
+    field-completeness panel).
+  - For any future screenshot that includes real student data: either
+    redact identifying columns (name, and consider school/grade too if the
+    program is small enough that those narrow it down on their own), or
+    screenshot a handful of made-up demo students instead — add a few with
+    obviously fake names via "Add Student", capture what you need, then
+    remove them with the admin delete flow.
+  - A student profile page (showing the Attachments section) and the Team
+    page would also be good additions, using placeholder/demo data.
 -->
 
 ## Overview
@@ -35,7 +59,8 @@ Do Greater Charlotte previously tracked student, guardian, and program data acro
 - Admin-only student deletion, with guardian/program/attachment cleanup and a retry-safe delete flow.
 
 **Bulk CSV Import**
-- Upload a renamed Google Forms export and get a full preview — grouped into **new**, **duplicate** (already in the database, safely skipped so re-uploading the same export never creates doubles), and **invalid** (missing name, unparseable date, etc.) — before anything is written.
+- Upload the Google Forms export as-is — no manual header renaming. The app fuzzy-matches each CSV column to a known field (e.g. `Student's Legal First Name` → `first_name`) and shows the suggested mapping for review before anything is parsed, so a mismatch gets caught and fixed in the UI instead of by editing the spreadsheet and re-exporting.
+- After the mapping is confirmed, a full preview groups rows into **new**, **duplicate** (already in the database, safely skipped so re-uploading the same export never creates doubles), and **invalid** (missing name, unparseable date, etc.) — before anything is written.
 - A field-completeness panel flags columns that are unexpectedly empty across every row, which is almost always a header-mapping mistake rather than genuinely missing data — catching that before import instead of after saves a debugging round trip.
 - Automated guardian-student linking from the CSV's form-submission timestamp, with a post-import check that flags any student whose guardians didn't link so it's never a silent failure.
 - Download a CSV of anything skipped, with the reason, for the record.
@@ -109,11 +134,16 @@ Open http://localhost:3000. The first person to sign in with Google won't have a
 
 ## Importing Students
 
-The `/import` page expects a CSV with these column headers (case/spacing-insensitive):
+The `/import` page walks through four steps: **Upload → Map Columns → Preview → Done**.
 
-`first_name, last_name, birthday, gender, pronouns, race_ethnicity, primary_language, school, grade_level, grad_year, personal_email, phone_number, street_address, city, zip_code, free_reduced_lunch, dietary_restrictions, shirt_size, iep_or_504, iep_504_details, created_at, guardian_first_name, guardian_last_name, guardian_phone_number, guardian_email, guardian_relationship, secondary_first_name, secondary_last_name, secondary_phone_number, secondary_email, secondary_relationship`
+1. **Upload** the Google Forms export CSV as-is — column headers don't need to match anything exactly.
+2. **Map Columns** — each CSV column is automatically matched to one of the app's known fields (first name, birthday, school, guardian email, etc.) using fuzzy text matching against a list of field aliases, with a confidence badge (Auto-matched / Best guess / Manually set / Not imported) per column. Review the suggested mapping, correct anything wrong from the dropdowns, and confirm — nothing is parsed from the file until this step is confirmed. Two fields are required: first and last name; everything else is optional.
+3. **Preview** groups every row into new / duplicate / invalid, plus a field-completeness check, before anything is written to the database.
+4. **Done** — a results summary, with a downloadable CSV of anything skipped and why.
 
-`created_at` should be the form's submission timestamp — it's what links a student to their guardian(s) from the same submission. Every upload shows a full preview (new / duplicate / invalid, plus a field-completeness check) before anything is written, so it's safe to re-upload the same or an overlapping export.
+The known fields (with a few of the aliases each one matches on) include: `first_name`, `last_name`, `birthday`, `gender`, `pronouns`, `race_ethnicity`, `primary_language`, `school`, `grade_level`, `grad_year`, `personal_email`, `phone_number`, `street_address`, `city`, `zip_code`, `free_reduced_lunch`, `dietary_restrictions`, `shirt_size`, `iep_or_504`, `iep_504_details`, `created_at`, `guardian_first_name`, `guardian_last_name`, `guardian_phone_number`, `guardian_email`, `guardian_relationship`, `secondary_first_name`, `secondary_last_name`, `secondary_phone_number`, `secondary_email`, `secondary_relationship`.
+
+`created_at` should map to the form's submission timestamp — it's what links a student to their guardian(s) from the same submission.
 
 ## Project Structure
 
