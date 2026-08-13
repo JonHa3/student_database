@@ -1,7 +1,14 @@
 'use client'
 
+/**
+ * Fixed left-hand navigation. "Team" only appears for admins — the /team
+ * page itself already redirects non-admins away, but surfacing the link
+ * only when it's usable is friendlier than a link that bounces you back.
+ */
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { createClient } from '@/lib/supabase'
 
 const navItems = [
   { label: 'Dashboard', href: '/' },
@@ -12,6 +19,22 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single()
+      setIsAdmin(profile?.role === 'admin')
+    })
+  }, [])
+
+  const items = isAdmin ? [...navItems, { label: 'Team', href: '/team' }] : navItems
 
   return (
     <aside style={{
@@ -53,7 +76,7 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav style={{ padding: '16px 0', flex: 1 }}>
-        {navItems.map((item) => {
+        {items.map((item) => {
           const isActive = pathname === item.href
           return (
             <Link

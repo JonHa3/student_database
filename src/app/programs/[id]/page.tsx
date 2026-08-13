@@ -1,3 +1,10 @@
+/**
+ * A single program's detail page: active vs. past enrollments, pulled via a
+ * nested Supabase select that joins `student_programs` -> `students`.
+ * Supabase's JS client types nested joins loosely, hence the
+ * `as unknown as {...}` casts below — the actual shape is known from the
+ * `.select()` query itself.
+ */
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'

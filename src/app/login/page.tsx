@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Sign-in page — the only route reachable without a session (see
+ * middleware.ts). Google OAuth is handled entirely by Supabase Auth; this
+ * just kicks off the redirect and lands back at /auth/callback.
+ */
 import { createClient } from '@/lib/supabase'
 
 export default function LoginPage() {
@@ -9,7 +14,10 @@ export default function LoginPage() {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `https://student-database-xi.vercel.app/auth/callback`,
+        // Built from the current origin rather than hardcoded, so Google
+        // sign-in also works from `npm run dev` on localhost and from
+        // Vercel preview deployments, not just the production domain.
+        redirectTo: `${window.location.origin}/auth/callback`,
       }
     })
   }

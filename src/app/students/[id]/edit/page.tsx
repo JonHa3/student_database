@@ -236,7 +236,100 @@ export default function EditStudentPage() {
     await loadGuardians()
     setSuccess('Guardian removed.')
   }
+  /**
+   * Permanently deletes a student and everything that references them.
+   *
+   * There's no multi-statement transaction available from the client here
+   * (that would need a Postgres function), so instead this checks the
+   * result of every step and stops immediately — with a specific error
+   * naming which step failed — rather than plowing ahead on a failure and
+   * leaving things partially cleaned up. Steps run child-data-first,
+   * student-row-last: if something fails partway through, the student
+   * record itself is still intact and every step so far is safe to re-run
+   * (deleting an already-empty set of links/files/enrollments is a no-op),
+   * so simply clicking Delete again resumes where it left off.
+   */
+  async function handleDeleteStudent() {
+    if (!confirm(`Permanently delete ${form.first_name} ${form.last_name}? This cannot be undone.`)) return
 
+    setSaving(true)
+    setError(null)
+
+    // 1. Remove guardian links, cleaning up any guardian left with no
+    //    other students attached.
+    const { data: links, error: linksError } = await supabase
+      .from('student_guardians')
+      .select('id, guardian_id')
+      .eq('student_id', studentId)
+
+    if (linksError) {
+      setError(`Delete stopped before making changes: couldn't read guardian links (${linksError.message}).`)
+      setSaving(false)
+      return
+    }
+
+    for (const link of links ?? []) {
+      const { error: unlinkError } = await supabase.from('student_guardians').delete().eq('id', link.id)
+      if (unlinkError) {
+        setError(`Delete stopped: couldn't remove a guardian link (${unlinkError.message}). Nothing else was deleted for this guardian — safe to try again.`)
+        setSaving(false)
+        return
+      }
+
+      const { data: otherLinks, error: otherLinksError } = await supabase
+        .from('student_guardians')
+        .select('id')
+        .eq('guardian_id', link.guardian_id)
+
+      if (otherLinksError) {
+        setError(`Delete stopped: couldn't verify whether a guardian is shared with other students (${otherLinksError.message}). Safe to try again.`)
+        setSaving(false)
+        return
+      }
+
+      if (!otherLinks || otherLinks.length === 0) {
+        const { error: guardianDeleteError } = await supabase.from('guardians').delete().eq('id', link.guardian_id)
+        if (guardianDeleteError) {
+          setError(`Delete stopped: couldn't remove an orphaned guardian record (${guardianDeleteError.message}). Safe to try again.`)
+          setSaving(false)
+          return
+        }
+      }
+    }
+
+    // 2. Remove program enrollment history.
+    const { error: programsError } = await supabase.from('student_programs').delete().eq('student_id', studentId)
+    if (programsError) {
+      setError(`Delete stopped: guardian links were removed, but program history couldn't be deleted (${programsError.message}). Safe to try again.`)
+      setSaving(false)
+      return
+    }
+
+    // 3. Remove any uploaded attachment images so they don't linger in
+    //    storage after the record referencing them is gone.
+    const { data: files } = await supabase.storage.from('student-attachments').list(studentId)
+    if (files && files.length > 0) {
+      const { error: attachmentsError } = await supabase.storage
+        .from('student-attachments')
+        .remove(files.map(f => `${studentId}/${f.name}`))
+      if (attachmentsError) {
+        setError(`Delete stopped: guardian links and program history were removed, but attachment files couldn't be deleted (${attachmentsError.message}). Safe to try again.`)
+        setSaving(false)
+        return
+      }
+    }
+
+    // 4. Finally, remove the student record itself.
+    const { error: deleteError } = await supabase.from('students').delete().eq('id', studentId)
+
+    if (deleteError) {
+      setError(`Everything but the student record itself was removed, but the final delete failed (${deleteError.message}). Safe to try again.`)
+      setSaving(false)
+      return
+    }
+
+    router.push('/students')
+  }
   async function handleSearchGuardians(query: string) {
     setGuardianSearch(query)
     if (!query || query.length < 2) {
@@ -744,6 +837,30 @@ export default function EditStudentPage() {
                       onChange={(e) => handleGuardianChange(index, 'first_name', e.target.value)}
                       style={inputStyle}
                     />
+                    {isAdmin && (
+  <div style={{
+    backgroundColor: '#fef2f2', borderRadius: '12px', padding: '24px',
+    border: '1px solid #fecaca', marginTop: '24px',
+  }}>
+    <h2 style={{ fontSize: '14px', fontWeight: '700', color: '#dc2626', margin: '0 0 8px 0' }}>
+      Danger Zone
+    </h2>
+    <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px 0' }}>
+      Permanently delete this student and all associated guardian links and program history.
+    </p>
+    <button
+      onClick={handleDeleteStudent}
+      disabled={saving}
+      style={{
+        backgroundColor: '#dc2626', color: '#ffffff', padding: '10px 20px',
+        borderRadius: '8px', border: 'none', fontSize: '14px', fontWeight: '600',
+        cursor: saving ? 'not-allowed' : 'pointer',
+      }}
+    >
+      Delete Student
+    </button>
+  </div>
+)}
                   </div>
                   <div>
                     <label style={labelStyle}>Last Name</label>

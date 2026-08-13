@@ -1,5 +1,6 @@
 'use client'
 
+/** Admin-only form (access enforced by the Programs list page and RLS) for creating a program. */
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'

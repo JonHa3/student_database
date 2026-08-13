@@ -1,3 +1,9 @@
+/**
+ * Team management (admin-only, enforced below by redirecting non-admins).
+ * `profiles` only has role + id, so this merges in email/name/avatar from
+ * Supabase Auth via the service-role admin client, then hands the combined
+ * list to the client component for the interactive role/removal controls.
+ */
 import { createServerSupabaseClient, createServiceRoleClient } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
 import TeamClient from './teamclient'

@@ -1,6 +1,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import StudentAttachments from '@/components/studentattachments'
 
 export default async function StudentProfilePage({
   params,
@@ -216,6 +217,9 @@ export default async function StudentProfilePage({
           </div>
         </div>
       </div>
+
+      {/* Attachments */}
+      <StudentAttachments studentId={id} />
 
       {/* Guardians */}
       <div style={{

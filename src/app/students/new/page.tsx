@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Manual "Add Student" form — the one-at-a-time counterpart to the bulk CSV
+ * import flow (`/import`). Useful for adding a single student who signs up
+ * outside the usual Google Form intake.
+ */
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'

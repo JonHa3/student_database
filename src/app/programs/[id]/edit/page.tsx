@@ -1,5 +1,6 @@
 'use client'
 
+/** Edit form for an existing program's name, description, and date range. */
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'

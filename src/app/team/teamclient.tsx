@@ -1,5 +1,11 @@
 'use client'
 
+/**
+ * Interactive half of the Team page: role changes and member removal.
+ * There's no invite flow — a new team member gets access simply by signing
+ * in with Google (see the login page), at which point they show up here
+ * with no role yet and can be promoted to staff/admin.
+ */
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 

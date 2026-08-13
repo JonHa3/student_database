@@ -1,5 +1,6 @@
 'use client'
 
+/** Two-column app shell: fixed-width sidebar + scrollable content area. */
 import Sidebar from '@/components/sidebar'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {

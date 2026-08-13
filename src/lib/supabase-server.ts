@@ -1,7 +1,15 @@
+/**
+ * Supabase clients for use on the server (Server Components, Route Handlers).
+ */
 import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 
+/**
+ * The standard server-side client: reads the logged-in user's session from
+ * cookies and is still subject to Row Level Security, same as the browser
+ * client. Use this for anything done "as the current user."
+ */
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies()
   
@@ -27,6 +35,13 @@ export async function createServerSupabaseClient() {
   )
 }
 
+/**
+ * Admin client authenticated with the service role key, which bypasses Row
+ * Level Security entirely. Only used where that's genuinely required (e.g.
+ * listing all auth users for the Team page, which isn't exposed through the
+ * regular `profiles` table) — never for routine data access. Must only ever
+ * run on the server; the service role key is never sent to the browser.
+ */
 export function createServiceRoleClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

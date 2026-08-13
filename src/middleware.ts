@@ -1,3 +1,11 @@
+/**
+ * Runs before every request (per the `matcher` below) to enforce that the
+ * app is login-gated: anyone without a Supabase session is redirected to
+ * /login, and a logged-in user hitting /login is bounced to the dashboard.
+ * This is the only thing standing between the app and an anonymous visitor —
+ * per-table/row access beyond "logged in or not" is enforced separately by
+ * Postgres Row Level Security policies.
+ */
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
